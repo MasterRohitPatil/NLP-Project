@@ -317,6 +317,24 @@ def clear_input_text():
     st.session_state.pop("last_loaded_preset", None)
 
 
+def record_prediction(text: str, pred_class: str, probs: dict):
+    history = st.session_state.get("prediction_history", [])
+    history.insert(0, {
+        "text": text[:90],
+        "label": pred_class,
+        "confidence": float(probs.get(pred_class, 0.0) * 100),
+    })
+    st.session_state["prediction_history"] = history[:6]
+
+
+def get_model_status_text():
+    model_path = os.path.join(MODELS_DIR, "sentiment_model.joblib")
+    vectorizer_path = os.path.join(MODELS_DIR, "tfidf_vectorizer.joblib")
+    if os.path.exists(model_path) and os.path.exists(vectorizer_path):
+        return "Saved model files detected — ready to use."
+    return "No saved model found — using a fast fallback auto-train."
+
+
 # -----------------------------------------------------------------------------
 # Sidebar: Configuration & Fast Presets
 # -----------------------------------------------------------------------------
@@ -327,6 +345,19 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
     st.caption("Self-contained NLP inference pipeline with no external API requirements.")
+
+    st.info(get_model_status_text(), icon="🧠")
+    if st.button("Refresh model", use_container_width=True):
+        st.cache_resource.clear()
+        st.rerun()
+
+    if st.session_state.get("prediction_history"):
+        st.markdown("---")
+        st.markdown("#### 🕘 Recent predictions")
+        for item in st.session_state["prediction_history"]:
+            st.markdown(
+                f"- **{item['label'].title()}** ({item['confidence']:.1f}%) — {item['text']}"
+            )
 
     st.markdown("---")
     st.markdown("#### 📝 **Insert Sample Reviews**")
@@ -381,6 +412,8 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+st.info(f"🧠 {get_model_status_text()}", icon="ℹ️")
 
 # -----------------------------------------------------------------------------
 # Tabs Layout
@@ -445,8 +478,8 @@ with tab_live:
 
         if text_to_eval:
             pred_class, probs, cleaned = predict_sentiment(text_to_eval)
+            record_prediction(text_to_eval, pred_class, probs)
 
-            # Visual badge styling
             meta = {
                 "positive": {"emoji": "🎉", "color": "#3ddc97", "css": "result-positive"},
                 "neutral": {"emoji": "⚖️", "color": "#ffd166", "css": "result-neutral"},
@@ -475,6 +508,7 @@ with tab_live:
                 unsafe_allow_html=True,
             )
 
+            st.success(f"✅ Most likely sentiment: **{pred_class.title()}** with **{confidence:.1f}%** confidence.", icon="✅")
             st.write("**Confidence Breakdown:**")
             for c in ["positive", "neutral", "negative"]:
                 p_val = probs.get(c, 0.0)
@@ -489,7 +523,6 @@ with tab_live:
                 )
                 st.progress(float(p_val))
 
-            # Under the hood inspection
             with st.expander("🔍 View Preprocessed Tokens & Extraction Details"):
                 st.write("**Raw Text:**", text_to_eval)
                 st.write("**Cleaned & Normalized:**", clean_text(text_to_eval))
@@ -500,6 +533,7 @@ with tab_live:
                 )
         else:
             st.info("Enter text in the box to the left and click **Classify Sentiment**.")
+            st.caption("Try one of the quick examples or paste a product review to get a quick prediction.")
 
 # -----------------------------------------------------------------------------
 # TAB 2: Batch CSV Analysis
@@ -509,6 +543,23 @@ with tab_batch:
     st.markdown(
         "Upload a `.csv` file containing review text or customer feedback to run bulk classification "
         "and export the augmented dataset."
+    )
+
+    sample_df = pd.DataFrame({
+        "text": [
+            "The product arrived quickly and works perfectly.",
+            "Terrible experience, the service was slow and unhelpful.",
+            "The item is okay, nothing special but acceptable.",
+        ],
+        "sentiment": ["positive", "negative", "neutral"],
+    })
+    csv_data = sample_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="⬇️ Download sample CSV",
+        data=csv_data,
+        file_name="sentiment_sample.csv",
+        mime="text/csv",
+        help="Download a starter CSV with example review text and labels.",
     )
 
     uploaded_file = st.file_uploader(
